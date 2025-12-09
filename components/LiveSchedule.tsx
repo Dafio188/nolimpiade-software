@@ -1,12 +1,12 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { Match, Player, Team } from '../types';
 import { DISCIPLINES } from '../constants';
-import { StorageService } from '../services/storageService';
 import { Clock, MapPin, AlertCircle } from 'lucide-react';
 
 interface LiveScheduleProps {
   matches: Match[];
   players: Player[];
+  teams: Team[];
 }
 
 interface ScheduledMatch extends Match {
@@ -15,12 +15,10 @@ interface ScheduledMatch extends Match {
   status: 'PLAYING' | 'UP_NEXT' | 'LATER';
 }
 
-export const LiveSchedule: React.FC<LiveScheduleProps> = ({ matches }) => {
-  const [teams, setTeams] = useState<Team[]>([]);
+export const LiveSchedule: React.FC<LiveScheduleProps> = ({ matches, teams }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
-    setTeams(StorageService.getTeams());
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);

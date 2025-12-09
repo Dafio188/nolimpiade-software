@@ -2,11 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Player, Match, Team } from '../types';
 import { askTournamentAssistant } from '../services/geminiService';
 import { Send, Bot, Sparkles, X } from 'lucide-react';
-import { StorageService } from '../services/storageService';
 
 interface AIAssistantProps {
     players: Player[];
     matches: Match[];
+    teams: Team[];
     onClose?: () => void;
 }
 
@@ -17,7 +17,7 @@ interface ChatMessage {
     timestamp: Date;
 }
 
-export const AIAssistant: React.FC<AIAssistantProps> = ({ players, matches, onClose }) => {
+export const AIAssistant: React.FC<AIAssistantProps> = ({ players, matches, teams, onClose }) => {
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [messages, setMessages] = useState<ChatMessage[]>([
@@ -29,11 +29,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ players, matches, onCl
         }
     ]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const [teams, setTeams] = useState<Team[]>([]);
-
-    useEffect(() => {
-        setTeams(StorageService.getTeams());
-    }, []);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

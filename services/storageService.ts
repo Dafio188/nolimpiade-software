@@ -1,11 +1,12 @@
 import { User, Match, DisciplineType, Team } from '../types';
 import { DISCIPLINES, INITIAL_PLAYERS } from '../constants';
+import { db } from './firebase';
+import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, query, where } from "firebase/firestore";
 
-const STORAGE_KEYS = {
-  USERS: 'nolimpiadi_users',
-  TEAMS: 'nolimpiadi_teams',
-  MATCHES: 'nolimpiadi_matches',
-  INIT: 'nolimpiadi_initialized_v2' // Changed key to force re-init for new logic
+const COLLECTIONS = {
+  USERS: 'users',
+  TEAMS: 'teams',
+  MATCHES: 'matches'
 };
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -22,151 +23,231 @@ const MASTER_USER: User = {
   weight: 6
 };
 
-// Merge Master into seed but ensure we respect the 12 player limit if needed. 
-// For this logic, we use INITIAL_PLAYERS + Master separately for Auth, 
-// but for Tournament we strictly use the balanced INITIAL_PLAYERS list (or modify it).
-// Let's assume Master is an admin mainly, but if he plays he needs to be in the 12.
-// To keep the math of 12 players (4/4/4) perfect, we use INITIAL_PLAYERS as the roster.
+// Internal Helper for balancing teams (Logic kept from previous version)
+const createBalancedTeams = (players: User[]): Team[] => {
+    const adulti = players.filter(p => p.weight === 6);
+    const giovani = players.filter(p => p.weight === 4);
+    const ragazzi = players.filter(p => p.weight === 2);
+
+    const teams: Team[] = [];
+
+    // Strategy: Pair 1 Adult (6) with 1 Ragazzo (2) = 8
+    for (let i = 0; i < 4; i++) {
+        const p1 = adulti[i];
+        const p2 = ragazzi[i];
+        if (p1 && p2) {
+            const teamId = generateId();
+            teams.push({
+                id: teamId,
+                name: `${p1.name.split(' ')[0]} & ${p2.name.split(' ')[0]}`,
+                playerIds: [p1.id, p2.id],
+                totalWeight: p1.weight + p2.weight,
+                avatar: `https://ui-avatars.com/api/?name=${p1.name}+${p2.name}&background=random&font-size=0.33`
+            });
+            p1.teamId = teamId;
+            p2.teamId = teamId;
+        }
+    }
+
+    // Strategy: Pair 2 Giovani (4+4) = 8
+    for (let i = 0; i < 4; i += 2) {
+        const p1 = giovani[i];
+        const p2 = giovani[i+1];
+        if (p1 && p2) {
+             const teamId = generateId();
+             teams.push({
+                id: teamId,
+                name: `${p1.name.split(' ')[0]} & ${p2.name.split(' ')[0]}`,
+                playerIds: [p1.id, p2.id],
+                totalWeight: p1.weight + p2.weight,
+                avatar: `https://ui-avatars.com/api/?name=${p1.name}+${p2.name}&background=random&font-size=0.33`
+            });
+            p1.teamId = teamId;
+            p2.teamId = teamId;
+        }
+    }
+    return teams;
+};
+
+const generateMatches = (teams: Team[], players: User[]): Match[] => {
+  const newMatches: Match[] = [];
+  
+  DISCIPLINES.forEach(disc => {
+    if (disc.isTeam) {
+        // Team Round Robin
+        for (let i = 0; i < teams.length; i++) {
+          for (let j = i + 1; j < teams.length; j++) {
+            newMatches.push({
+              id: generateId(),
+              disciplineId: disc.id,
+              player1Id: teams[i].id,
+              player2Id: teams[j].id,
+              score1: null,
+              score2: null,
+              isCompleted: false,
+              phase: 'ROUND_ROBIN'
+            });
+          }
+        }
+    } else {
+        // Individual Round Robin
+        for (let i = 0; i < players.length; i++) {
+          for (let j = i + 1; j < players.length; j++) {
+             newMatches.push({
+              id: generateId(),
+              disciplineId: disc.id,
+              player1Id: players[i].id,
+              player2Id: players[j].id,
+              score1: null,
+              score2: null,
+              isCompleted: false,
+              phase: 'ROUND_ROBIN'
+            });
+          }
+        }
+    }
+  });
+  return newMatches;
+};
 
 export const StorageService = {
-  init: () => {
-    if (!localStorage.getItem(STORAGE_KEYS.INIT)) {
-      // 1. Save Users (Master + Players)
-      const allUsers = [MASTER_USER, ...INITIAL_PLAYERS];
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(allUsers));
-      
-      // 2. Create Balanced Teams from INITIAL_PLAYERS
-      const teams = StorageService.createBalancedTeams(INITIAL_PLAYERS);
-      localStorage.setItem(STORAGE_KEYS.TEAMS, JSON.stringify(teams));
+  // --- Initialization ---
+  init: async () => {
+    try {
+        const usersRef = collection(db, COLLECTIONS.USERS);
+        const snapshot = await getDocs(usersRef);
 
-      // 3. Generate Matches (Team vs Team)
-      const initialMatches = StorageService.generateTeamMatches(teams);
-      localStorage.setItem(STORAGE_KEYS.MATCHES, JSON.stringify(initialMatches));
-      
-      localStorage.setItem(STORAGE_KEYS.INIT, 'true');
+        if (snapshot.empty) {
+            console.log("Database empty. Seeding initial data...");
+            const batch = writeBatch(db);
+
+            // 1. Prepare Users
+            const allUsers = [MASTER_USER, ...INITIAL_PLAYERS];
+            // Note: createBalancedTeams modifies user objects (adds teamId), so we do that first
+            
+            // 2. Create Teams
+            const teams = createBalancedTeams(INITIAL_PLAYERS); // This modifies INITIAL_PLAYERS objects in memory
+            
+            // 3. Generate Matches
+            const initialMatches = generateMatches(teams, INITIAL_PLAYERS);
+
+            // 4. Batch Write Users
+            // We need to write the updated INITIAL_PLAYERS (with teamIds) and Master
+            [MASTER_USER, ...INITIAL_PLAYERS].forEach(u => {
+                const ref = doc(db, COLLECTIONS.USERS, u.id);
+                batch.set(ref, u);
+            });
+
+            // 5. Batch Write Teams
+            teams.forEach(t => {
+                const ref = doc(db, COLLECTIONS.TEAMS, t.id);
+                batch.set(ref, t);
+            });
+
+            // 6. Batch Write Matches
+            initialMatches.forEach(m => {
+                const ref = doc(db, COLLECTIONS.MATCHES, m.id);
+                batch.set(ref, m);
+            });
+
+            await batch.commit();
+            console.log("Seeding complete!");
+        } else {
+            console.log("Database already initialized.");
+        }
+    } catch (e) {
+        console.error("Error initializing DB:", e);
+        throw e; // Propagate error to UI
     }
   },
 
-  // --- Logic for Teams ---
-  createBalancedTeams: (players: User[]): Team[] => {
-      // We need 6 teams. Target weight ~8.
-      // Pool A: Adulti (6) - 4 players
-      // Pool B: Giovani (4) - 4 players
-      // Pool C: Ragazzi (2) - 4 players
-      
-      const adulti = players.filter(p => p.weight === 6);
-      const giovani = players.filter(p => p.weight === 4);
-      const ragazzi = players.filter(p => p.weight === 2);
-
-      const teams: Team[] = [];
-
-      // Strategy: Pair 1 Adult (6) with 1 Ragazzo (2) = 8
-      for (let i = 0; i < 4; i++) {
-          const p1 = adulti[i];
-          const p2 = ragazzi[i];
-          if (p1 && p2) {
-              teams.push({
-                  id: generateId(),
-                  name: `${p1.name.split(' ')[0]} & ${p2.name.split(' ')[0]}`,
-                  playerIds: [p1.id, p2.id],
-                  totalWeight: p1.weight + p2.weight,
-                  avatar: `https://ui-avatars.com/api/?name=${p1.name}+${p2.name}&background=random&font-size=0.33`
-              });
-              // Update users with teamId
-              p1.teamId = teams[teams.length-1].id;
-              p2.teamId = teams[teams.length-1].id;
-          }
-      }
-
-      // Strategy: Pair 2 Giovani (4+4) = 8
-      for (let i = 0; i < 4; i += 2) {
-          const p1 = giovani[i];
-          const p2 = giovani[i+1];
-          if (p1 && p2) {
-               teams.push({
-                  id: generateId(),
-                  name: `${p1.name.split(' ')[0]} & ${p2.name.split(' ')[0]}`,
-                  playerIds: [p1.id, p2.id],
-                  totalWeight: p1.weight + p2.weight,
-                  avatar: `https://ui-avatars.com/api/?name=${p1.name}+${p2.name}&background=random&font-size=0.33`
-              });
-              p1.teamId = teams[teams.length-1].id;
-              p2.teamId = teams[teams.length-1].id;
-          }
-      }
-
-      return teams;
-  },
-
-  getTeams: (): Team[] => {
-      const data = localStorage.getItem(STORAGE_KEYS.TEAMS);
-      return data ? JSON.parse(data) : [];
-  },
-
-  // --- Matches ---
-  generateTeamMatches: (teams: Team[]): Match[] => {
-    const newMatches: Match[] = [];
-    DISCIPLINES.forEach(disc => {
-      for (let i = 0; i < teams.length; i++) {
-        for (let j = i + 1; j < teams.length; j++) {
-          newMatches.push({
-            id: generateId(),
-            disciplineId: disc.id,
-            player1Id: teams[i].id, // Storing Team ID here
-            player2Id: teams[j].id, // Storing Team ID here
-            score1: null,
-            score2: null,
-            isCompleted: false,
-            phase: 'ROUND_ROBIN'
-          });
+  // --- Subscriptions (Real-time) ---
+  subscribeToUsers: (callback: (users: User[]) => void, onError?: (error: any) => void) => {
+      return onSnapshot(collection(db, COLLECTIONS.USERS), 
+        (snapshot) => {
+            const users = snapshot.docs.map(d => d.data() as User);
+            callback(users);
+        }, 
+        (error) => {
+            console.error("Snapshot Listener Error (Users):", error);
+            if (onError) onError(error);
         }
-      }
-    });
-    return newMatches;
+      );
   },
 
-  // --- Standard CRUD ---
-  login: (username: string, pass: string): User | null => {
-    const users = StorageService.getUsers();
-    return users.find(u => u.username === username && u.password === pass) || null;
+  subscribeToTeams: (callback: (teams: Team[]) => void, onError?: (error: any) => void) => {
+      return onSnapshot(collection(db, COLLECTIONS.TEAMS), 
+        (snapshot) => {
+            const teams = snapshot.docs.map(d => d.data() as Team);
+            callback(teams);
+        },
+        (error) => {
+            console.error("Snapshot Listener Error (Teams):", error);
+            if (onError) onError(error);
+        }
+      );
   },
 
-  getUsers: (): User[] => {
-    const data = localStorage.getItem(STORAGE_KEYS.USERS);
-    return data ? JSON.parse(data) : [];
+  subscribeToMatches: (callback: (matches: Match[]) => void, onError?: (error: any) => void) => {
+      return onSnapshot(collection(db, COLLECTIONS.MATCHES), 
+        (snapshot) => {
+            const matches = snapshot.docs.map(d => d.data() as Match);
+            callback(matches);
+        },
+        (error) => {
+            console.error("Snapshot Listener Error (Matches):", error);
+            if (onError) onError(error);
+        }
+      );
   },
 
-  getMatches: (): Match[] => {
-    const data = localStorage.getItem(STORAGE_KEYS.MATCHES);
-    return data ? JSON.parse(data) : [];
+  // --- Actions ---
+  login: async (username: string, pass: string): Promise<User | null> => {
+    try {
+        const q = query(collection(db, COLLECTIONS.USERS), where("username", "==", username), where("password", "==", pass));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            return snapshot.docs[0].data() as User;
+        }
+        return null;
+    } catch (error) {
+        console.error("Login Error:", error);
+        throw error;
+    }
   },
 
-  saveMatches: (matches: Match[]) => {
-    localStorage.setItem(STORAGE_KEYS.MATCHES, JSON.stringify(matches));
-  },
-
-  addUser: (user: Omit<User, 'id'>) => {
-    const users = StorageService.getUsers();
-    const newUser = { ...user, id: generateId() };
-    users.push(newUser);
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-    // Note: Adding a user mid-tournament doesn't automatically put them in a balanced team in this version
+  addUser: async (user: Omit<User, 'id'>) => {
+    const newId = generateId();
+    const newUser = { ...user, id: newId };
+    await setDoc(doc(db, COLLECTIONS.USERS, newId), newUser);
     return newUser;
   },
 
-  updateUser: (updatedUser: User) => {
-    const users = StorageService.getUsers();
-    const index = users.findIndex(u => u.id === updatedUser.id);
-    if (index !== -1) {
-        users[index] = updatedUser;
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-    }
+  updateUser: async (updatedUser: User) => {
+    await setDoc(doc(db, COLLECTIONS.USERS, updatedUser.id), updatedUser, { merge: true });
   },
 
-  deleteUser: (userId: string) => {
-    let users = StorageService.getUsers();
-    users = users.filter(u => u.id !== userId);
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-    // Deleting a user destroys the team balance, realistically implies tournament reset
+  deleteUser: async (userId: string) => {
+    await deleteDoc(doc(db, COLLECTIONS.USERS, userId));
+    // Ideally, we should also cleanup matches/teams, but keeping it simple for now
+  },
+
+  updateMatch: async (match: Match) => {
+      await setDoc(doc(db, COLLECTIONS.MATCHES, match.id), match, { merge: true });
+  },
+  
+  // Used for bulk updates (e.g. generating brackets)
+  saveMatchesBatch: async (matches: Match[]) => {
+      const batch = writeBatch(db);
+      matches.forEach(m => {
+          const ref = doc(db, COLLECTIONS.MATCHES, m.id);
+          batch.set(ref, m);
+      });
+      await batch.commit();
+  },
+
+  getTeamsOnce: async (): Promise<Team[]> => {
+      const s = await getDocs(collection(db, COLLECTIONS.TEAMS));
+      return s.docs.map(d => d.data() as Team);
   }
 };

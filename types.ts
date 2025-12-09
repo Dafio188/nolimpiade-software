@@ -34,6 +34,7 @@ export interface Discipline {
   icon: string;
   color: string;
   rules: string; // e.g., "Vince chi arriva a 11"
+  isTeam: boolean; // TRUE = 2vs2 (uses Teams), FALSE = 1vs1 (uses Players directly)
 }
 
 export type MatchPhase = 'ROUND_ROBIN' | 'QUARTER_FINAL' | 'SEMI_FINAL' | 'FINAL';
@@ -42,8 +43,8 @@ export interface Match {
   id: string;
   disciplineId: DisciplineType;
   // Previously playerIds, now these refer to Team IDs
-  player1Id: string; // Represents Team 1
-  player2Id: string; // Represents Team 2
+  player1Id: string; // Represents Team 1 ID OR Player 1 ID (depending on discipline)
+  player2Id: string; // Represents Team 2 ID OR Player 2 ID
   score1: number | null;
   score2: number | null;
   isCompleted: boolean;

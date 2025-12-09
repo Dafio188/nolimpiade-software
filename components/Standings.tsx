@@ -1,25 +1,20 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { Player, StandingRow, Discipline, Match, User, Team } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Player, StandingRow, Match, User, Team } from '../types';
 import { DISCIPLINES, WIN_POINTS, DRAW_POINTS, LOSS_POINTS } from '../constants';
-import { Trophy, Wand2, User as UserIcon } from 'lucide-react';
+import { Trophy, Wand2 } from 'lucide-react';
 import { analyzeStandings } from '../services/geminiService';
-import { StorageService } from '../services/storageService';
 
 interface StandingsProps {
   players: Player[];
   matches: Match[];
+  teams: Team[];
   currentUser: User | null;
 }
 
-export const Standings: React.FC<StandingsProps> = ({ players, matches, currentUser }) => {
+export const Standings: React.FC<StandingsProps> = ({ players, matches, teams, currentUser }) => {
   const [activeTab, setActiveTab] = useState<string>(DISCIPLINES[0].id);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
-  const [teams, setTeams] = useState<Team[]>([]);
-
-  useEffect(() => {
-      setTeams(StorageService.getTeams());
-  }, []);
 
   // Calculate INDIVIDUAL standings
   const calculateStandings = (disciplineId: string): StandingRow[] => {
@@ -44,14 +39,8 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
     );
 
     relevantMatches.forEach(m => {
-      // Resolve Teams
-      const team1 = teams.find(t => t.id === m.player1Id);
-      const team2 = teams.find(t => t.id === m.player2Id);
-      
-      if (!team1 || !team2 || m.score1 === null || m.score2 === null) return;
-
-      const score1 = m.score1;
-      const score2 = m.score2;
+      const score1 = m.score1!;
+      const score2 = m.score2!;
       const diff1 = score1 - score2;
       const diff2 = score2 - score1;
 
@@ -64,29 +53,54 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
       else if (score2 > score1) { pts2 = WIN_POINTS; pts1 = LOSS_POINTS; w2 = 1; l1 = 1; }
       else { pts1 = DRAW_POINTS; pts2 = DRAW_POINTS; }
 
-      // Distribute stats to INDIVIDUAL players of Team 1
-      team1.playerIds.forEach(pid => {
-          if (stats[pid]) {
-              stats[pid].played += 1;
-              stats[pid].points += pts1;
-              stats[pid].diff += diff1;
-              stats[pid].won += w1;
-              stats[pid].wins += w1;
-              stats[pid].lost += l1;
-          }
-      });
+      // --- Logic for Team Matches (Ping Pong, Calciobalilla) ---
+      const team1 = teams.find(t => t.id === m.player1Id);
+      const team2 = teams.find(t => t.id === m.player2Id);
 
-      // Distribute stats to INDIVIDUAL players of Team 2
-      team2.playerIds.forEach(pid => {
-          if (stats[pid]) {
-              stats[pid].played += 1;
-              stats[pid].points += pts2;
-              stats[pid].diff += diff2;
-              stats[pid].won += w2;
-              stats[pid].wins += w2;
-              stats[pid].lost += l2;
+      if (team1 && team2) {
+          // Distribute stats to INDIVIDUAL players of Team 1
+          team1.playerIds.forEach(pid => {
+              if (stats[pid]) {
+                  stats[pid].played += 1;
+                  stats[pid].points += pts1;
+                  stats[pid].diff += diff1;
+                  stats[pid].won += w1;
+                  stats[pid].wins += w1; // Duplicate for sorting if needed
+                  stats[pid].lost += l1;
+              }
+          });
+
+          // Distribute stats to INDIVIDUAL players of Team 2
+          team2.playerIds.forEach(pid => {
+              if (stats[pid]) {
+                  stats[pid].played += 1;
+                  stats[pid].points += pts2;
+                  stats[pid].diff += diff2;
+                  stats[pid].won += w2;
+                  stats[pid].wins += w2;
+                  stats[pid].lost += l2;
+              }
+          });
+      } else {
+          // --- Logic for Individual Matches (Freccette, Basket) ---
+          // m.player1Id and m.player2Id are Player IDs directly
+          if (stats[m.player1Id]) {
+              stats[m.player1Id].played += 1;
+              stats[m.player1Id].points += pts1;
+              stats[m.player1Id].diff += diff1;
+              stats[m.player1Id].won += w1;
+              stats[m.player1Id].wins += w1;
+              stats[m.player1Id].lost += l1;
           }
-      });
+           if (stats[m.player2Id]) {
+              stats[m.player2Id].played += 1;
+              stats[m.player2Id].points += pts2;
+              stats[m.player2Id].diff += diff2;
+              stats[m.player2Id].won += w2;
+              stats[m.player2Id].wins += w2;
+              stats[m.player2Id].lost += l2;
+          }
+      }
     });
 
     return Object.values(stats).sort((a, b) => {

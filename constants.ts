@@ -1,10 +1,10 @@
 import { Discipline, Player } from './types';
 
 export const DISCIPLINES: Discipline[] = [
-  { id: 'PING_PONG', name: 'Ping Pong', icon: '🏓', color: 'bg-orange-500', rules: 'Vince chi arriva prima a 11 punti' },
-  { id: 'CALCIOBALILLA', name: 'Calciobalilla', icon: '⚽', color: 'bg-green-600', rules: 'Vince chi segna 5 goal' },
-  { id: 'FRECCETTE', name: 'Freccette', icon: '🎯', color: 'bg-red-600', rules: 'Primo team a 200 punti' },
-  { id: 'BASKET', name: 'Basket Tiri', icon: '🏀', color: 'bg-amber-600', rules: 'Primi a fare 5 canestri' },
+  { id: 'PING_PONG', name: 'Ping Pong', icon: '🏓', color: 'bg-orange-500', rules: '2vs2 - Vince chi arriva prima a 11 punti', isTeam: true },
+  { id: 'CALCIOBALILLA', name: 'Calciobalilla', icon: '⚽', color: 'bg-green-600', rules: '2vs2 - Vince chi segna 5 goal', isTeam: true },
+  { id: 'FRECCETTE', name: 'Freccette', icon: '🎯', color: 'bg-red-600', rules: '1vs1 - 301 Chiude con doppia', isTeam: false },
+  { id: 'BASKET', name: 'Basket Tiri', icon: '🏀', color: 'bg-amber-600', rules: '1vs1 - Gara a 10 tiri liberi', isTeam: false },
 ];
 
 // 12 Players balanced: 4 Ragazzi (2), 4 Giovani (4), 4 Adulti (6)
