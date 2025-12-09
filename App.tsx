@@ -8,7 +8,7 @@ import { FinalsView } from './components/Bracket';
 import { UserManager } from './components/UserManager';
 import { LiveSchedule } from './components/LiveSchedule'; 
 import { AIAssistant } from './components/AIAssistant';
-import { User as UserIcon, ShieldCheck, PlayCircle, Trophy, MessageSquareText, Loader2, AlertTriangle, ExternalLink, Copy, Check, KeyRound } from 'lucide-react';
+import { User as UserIcon, ShieldCheck, PlayCircle, Trophy, MessageSquareText, Loader2, AlertTriangle, ExternalLink, Copy, Check, KeyRound, WifiOff } from 'lucide-react';
 import { StorageService } from './services/storageService';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -20,6 +20,9 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
   const [copiedRules, setCopiedRules] = useState(false);
+  
+  // Flag to trigger re-subscription when switching modes
+  const [dataSourceMode, setDataSourceMode] = useState<'FIREBASE' | 'OFFLINE'>('FIREBASE');
   
   const [appState, setAppState] = useState<AppState>({ view: 'LOGIN', currentUser: null });
   
@@ -50,6 +53,7 @@ const App: React.FC = () => {
     };
 
     const initData = async () => {
+        setLoading(true);
         try {
             await StorageService.init();
             setLoading(false);
@@ -69,7 +73,13 @@ const App: React.FC = () => {
         unsubTeams();
         unsubMatches();
     };
-  }, []);
+  }, [dataSourceMode]); // Re-run if we switch mode
+
+  const handleEnableOffline = async () => {
+      await StorageService.enableOfflineMode();
+      setDbError(null);
+      setDataSourceMode('OFFLINE');
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -252,15 +262,28 @@ service cloud.firestore {
               <div className="bg-red-500/20 p-4 rounded-full mb-6 ring-4 ring-red-500/30">
                 <AlertTriangle size={64} className="text-red-500" />
               </div>
-              <h1 className="text-2xl font-bold mb-4 text-red-100">Configurazione Database Necessaria</h1>
+              <h1 className="text-2xl font-bold mb-4 text-red-100">Ops! Problemi con il Cloud</h1>
               <p className="text-gray-300 max-w-lg mb-8 leading-relaxed">
-                  {dbError}
+                  Sembra che la configurazione di Firebase abbia qualche problema o che tu non abbia ancora creato il database.
               </p>
               
-              <div className="w-full max-w-xl text-left bg-black/50 rounded-xl p-6 border border-gray-700 shadow-2xl mb-8">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-700 pb-2">Soluzione: Aggiorna le Regole</h3>
-                  <p className="text-sm text-gray-300 mb-3">Copia questo codice ESATTO e incollalo nella scheda <strong>Rules</strong> della Console Firebase:</p>
-                  
+              <div className="flex flex-col gap-4 w-full max-w-md">
+                 <button 
+                    onClick={handleEnableOffline} 
+                    className="flex items-center justify-center gap-2 px-8 py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold shadow-lg shadow-green-900/50 transition-transform active:scale-95 text-lg"
+                 >
+                    <WifiOff size={24} />
+                    Usa Versione Offline
+                    <span className="text-xs bg-green-800 px-2 py-0.5 rounded text-green-100 font-normal">Senza Cloud</span>
+                </button>
+                <p className="text-xs text-gray-500 mt-1">I dati verranno salvati solo su questo dispositivo.</p>
+
+                <div className="my-4 border-t border-gray-700 relative">
+                     <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-900 px-2 text-gray-500 text-xs">OPPURE RISOLVI IL PROBLEMA</span>
+                </div>
+
+                <div className="w-full text-left bg-black/50 rounded-xl p-6 border border-gray-700 shadow-2xl mb-2">
+                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-700 pb-2">Admin: Aggiorna Regole DB</h3>
                   <div className="relative group">
                     <pre className="bg-gray-950 p-4 rounded-lg text-green-400 font-mono text-xs md:text-sm overflow-x-auto border border-gray-800">
                         {rulesCode}
@@ -274,15 +297,12 @@ service cloud.firestore {
                         <span className="text-xs font-bold">{copiedRules ? 'Copiato!' : 'Copia'}</span>
                     </button>
                   </div>
+                   <div className="flex justify-center mt-4">
+                        <button onClick={() => window.location.reload()} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-md text-sm">
+                            Ho Aggiornato, Riprova
+                        </button>
+                    </div>
               </div>
-
-              <div className="flex gap-4">
-                <a href="https://console.firebase.google.com" target="_blank" className="flex items-center gap-2 px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-full font-medium transition-colors">
-                    <ExternalLink size={18} /> Apri Console
-                </a>
-                <button onClick={() => window.location.reload()} className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-bold shadow-lg shadow-blue-900/50 transition-transform active:scale-95">
-                    Ho Aggiornato, Riprova
-                </button>
               </div>
           </div>
       )
@@ -294,17 +314,20 @@ service cloud.firestore {
       <div className="flex items-center justify-center min-h-screen bg-black/40 backdrop-blur-sm p-4">
         <div className="w-full max-w-md bg-white/90 p-8 rounded-3xl shadow-2xl backdrop-blur-md border border-white/50 text-center animate-fade-in relative overflow-hidden">
           {/* Default Credentials Hint */}
-          <div className="absolute top-0 left-0 w-full bg-yellow-100 text-yellow-800 text-[10px] py-1 font-bold tracking-wide border-b border-yellow-200">
-              MODALITÀ DEMO
+          <div className="absolute top-0 left-0 w-full bg-yellow-100 text-yellow-800 text-[10px] py-1 font-bold tracking-wide border-b border-yellow-200 flex justify-between px-4">
+              <span>MODALITÀ DEMO</span>
+              {dataSourceMode === 'OFFLINE' && <span className="flex items-center gap-1"><WifiOff size={8} /> OFFLINE MODE</span>}
           </div>
 
           <div className="mb-6 flex justify-center mt-4">
-            <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-4 rounded-2xl shadow-lg">
-                <Trophy size={48} className="text-white" />
+            <div className={`bg-gradient-to-br p-4 rounded-2xl shadow-lg ${dataSourceMode === 'OFFLINE' ? 'from-green-500 to-teal-600' : 'from-blue-500 to-purple-600'}`}>
+                {dataSourceMode === 'OFFLINE' ? <WifiOff size={48} className="text-white" /> : <Trophy size={48} className="text-white" />}
             </div>
           </div>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Nolimpiadi OS</h1>
-          <p className="text-gray-500 mb-6">Accesso Atleti & Master</p>
+          <p className="text-gray-500 mb-6">
+              {dataSourceMode === 'OFFLINE' ? 'Accesso Locale (Dati salvati sul device)' : 'Accesso Atleti & Master (Cloud)'}
+          </p>
           
           <form onSubmit={handleLogin} className="space-y-4">
             <input
@@ -325,7 +348,7 @@ service cloud.firestore {
             <button
               type="submit"
               disabled={isLoggingIn || loading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-xl font-semibold shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2"
+              className={`w-full py-3 text-white rounded-xl font-semibold shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2 ${dataSourceMode === 'OFFLINE' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`}
             >
               {isLoggingIn || loading ? <Loader2 className="animate-spin" size={20} /> : 'Entra'}
             </button>
@@ -347,7 +370,7 @@ service cloud.firestore {
           </div>
           
           <div className="mt-6 text-xs text-gray-400">
-             Cloud System Ready v3.0
+             Cloud System Ready v3.0 {dataSourceMode === 'OFFLINE' && '(Offline)'}
           </div>
         </div>
       </div>
@@ -414,7 +437,7 @@ service cloud.firestore {
                     <span>{progress}%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
-                    <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
+                    <div className={`h-2.5 rounded-full ${dataSourceMode === 'OFFLINE' ? 'bg-green-600' : 'bg-blue-600'}`} style={{ width: `${progress}%` }}></div>
                 </div>
                 <div className="mt-2 text-xs text-right text-gray-400">{completedCount} / {totalMatches} completati</div>
               </div>
@@ -480,7 +503,7 @@ service cloud.firestore {
       {/* Top Bar - Simplified for Mobile */}
       <div className="h-8 bg-gray-900/90 backdrop-blur-md text-white flex items-center justify-between px-4 text-xs font-medium z-50 shadow-md flex-shrink-0">
         <div className="flex items-center space-x-4">
-            <span className="font-bold"> Nolimpiadi Cloud</span>
+            <span className="font-bold"> Nolimpiadi Cloud {dataSourceMode === 'OFFLINE' ? '(Local)' : ''}</span>
             <span className="hidden md:inline">File</span>
             <span className="hidden md:inline">Modifica</span>
             <span className="hidden md:inline">Vista</span>
@@ -521,7 +544,7 @@ service cloud.firestore {
                     {loading ? (
                         <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-3">
                             <Loader2 size={40} className="animate-spin text-blue-600" />
-                            <p>Sincronizzazione dati dal cloud...</p>
+                            <p>Sincronizzazione dati...</p>
                         </div>
                     ) : (
                         ContentComponent

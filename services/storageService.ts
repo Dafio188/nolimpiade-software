@@ -1,7 +1,6 @@
 import { User, Match, DisciplineType, Team } from '../types';
 import { DISCIPLINES, INITIAL_PLAYERS } from '../constants';
 import { db } from './firebase';
-import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, query, where } from "firebase/firestore";
 
 const COLLECTIONS = {
   USERS: 'users',
@@ -23,11 +22,13 @@ const MASTER_USER: User = {
   weight: 6
 };
 
-// Internal Helper for balancing teams (Logic kept from previous version)
+// Internal Helper for balancing teams
 const createBalancedTeams = (players: User[]): Team[] => {
-    const adulti = players.filter(p => p.weight === 6);
-    const giovani = players.filter(p => p.weight === 4);
-    const ragazzi = players.filter(p => p.weight === 2);
+    // Clone players to avoid mutation issues during retries
+    const pList = JSON.parse(JSON.stringify(players));
+    const adulti = pList.filter((p: User) => p.weight === 6);
+    const giovani = pList.filter((p: User) => p.weight === 4);
+    const ragazzi = pList.filter((p: User) => p.weight === 2);
 
     const teams: Team[] = [];
 
@@ -44,6 +45,7 @@ const createBalancedTeams = (players: User[]): Team[] => {
                 totalWeight: p1.weight + p2.weight,
                 avatar: `https://ui-avatars.com/api/?name=${p1.name}+${p2.name}&background=random&font-size=0.33`
             });
+            // Update the player objects in our local list to have the teamId
             p1.teamId = teamId;
             p2.teamId = teamId;
         }
@@ -110,144 +112,215 @@ const generateMatches = (teams: Team[], players: User[]): Match[] => {
   return newMatches;
 };
 
+// --- OFFLINE MODE UTILS ---
+let isOfflineMode = false;
+const offlineSubscribers = {
+    users: [] as ((data: User[]) => void)[],
+    teams: [] as ((data: Team[]) => void)[],
+    matches: [] as ((data: Match[]) => void)[]
+};
+
+const getLocal = (key: string) => JSON.parse(localStorage.getItem(`nolimpiadi_${key}`) || '[]');
+const setLocal = (key: string, data: any) => localStorage.setItem(`nolimpiadi_${key}`, JSON.stringify(data));
+
+const notifyOffline = (key: 'users' | 'teams' | 'matches') => {
+    const data = getLocal(key);
+    offlineSubscribers[key].forEach(cb => cb(data));
+};
+
 export const StorageService = {
-  // --- Initialization ---
+  // Enables offline mode and seeds data if empty
+  enableOfflineMode: async () => {
+      isOfflineMode = true;
+      console.log("OFFLINE MODE ENABLED");
+      
+      if (getLocal(COLLECTIONS.USERS).length === 0) {
+          console.log("Seeding Local Offline Data...");
+          
+          // Use copies to generate
+          const teams = createBalancedTeams([...INITIAL_PLAYERS]); 
+          
+          // Re-map players because createBalancedTeams might have updated teamIds on the objects it created
+          // In a real DB we update docs. Here we need to reconstruct the player list with team IDs.
+          // Simplification: We take ALL users (Master + Players) and update their teamId if found in teams
+          const allUsers = [MASTER_USER, ...INITIAL_PLAYERS].map(u => {
+             const foundTeam = teams.find(t => t.playerIds.includes(u.id));
+             return foundTeam ? { ...u, teamId: foundTeam.id } : u;
+          });
+
+          const matches = generateMatches(teams, allUsers);
+          
+          setLocal(COLLECTIONS.USERS, allUsers);
+          setLocal(COLLECTIONS.TEAMS, teams);
+          setLocal(COLLECTIONS.MATCHES, matches);
+      }
+      
+      // Notify immediately
+      notifyOffline('users');
+      notifyOffline('teams');
+      notifyOffline('matches');
+  },
+
   init: async () => {
+    if (isOfflineMode) return;
     try {
-        const usersRef = collection(db, COLLECTIONS.USERS);
-        const snapshot = await getDocs(usersRef);
+        const usersSnapshot = await db.collection(COLLECTIONS.USERS).get();
 
-        if (snapshot.empty) {
+        if (usersSnapshot.empty) {
             console.log("Database empty. Seeding initial data...");
-            const batch = writeBatch(db);
+            const batch = db.batch();
 
-            // 1. Prepare Users
-            const allUsers = [MASTER_USER, ...INITIAL_PLAYERS];
-            // Note: createBalancedTeams modifies user objects (adds teamId), so we do that first
+            // 1. Create Teams (this logic is shared but we need to capture the objects)
+            // We clone to avoid side effects on constants
+            const playerClones = JSON.parse(JSON.stringify(INITIAL_PLAYERS));
+            const teams = createBalancedTeams(playerClones);
             
-            // 2. Create Teams
-            const teams = createBalancedTeams(INITIAL_PLAYERS); // This modifies INITIAL_PLAYERS objects in memory
-            
+            // 2. Prepare Users List (Master + Players with updated TeamIDs)
+            // Note: createBalancedTeams updated 'playerClones' with teamIds
+            const allUsers = [MASTER_USER, ...playerClones];
+
             // 3. Generate Matches
-            const initialMatches = generateMatches(teams, INITIAL_PLAYERS);
+            const initialMatches = generateMatches(teams, allUsers);
 
-            // 4. Batch Write Users
-            // We need to write the updated INITIAL_PLAYERS (with teamIds) and Master
-            [MASTER_USER, ...INITIAL_PLAYERS].forEach(u => {
-                const ref = doc(db, COLLECTIONS.USERS, u.id);
-                batch.set(ref, u);
-            });
-
-            // 5. Batch Write Teams
-            teams.forEach(t => {
-                const ref = doc(db, COLLECTIONS.TEAMS, t.id);
-                batch.set(ref, t);
-            });
-
-            // 6. Batch Write Matches
-            initialMatches.forEach(m => {
-                const ref = doc(db, COLLECTIONS.MATCHES, m.id);
-                batch.set(ref, m);
-            });
+            allUsers.forEach(u => batch.set(db.collection(COLLECTIONS.USERS).doc(u.id), u));
+            teams.forEach(t => batch.set(db.collection(COLLECTIONS.TEAMS).doc(t.id), t));
+            initialMatches.forEach(m => batch.set(db.collection(COLLECTIONS.MATCHES).doc(m.id), m));
 
             await batch.commit();
             console.log("Seeding complete!");
-        } else {
-            console.log("Database already initialized.");
         }
     } catch (e) {
-        console.error("Error initializing DB:", e);
-        throw e; // Propagate error to UI
+        throw e;
     }
   },
 
-  // --- Subscriptions (Real-time) ---
   subscribeToUsers: (callback: (users: User[]) => void, onError?: (error: any) => void) => {
-      return onSnapshot(collection(db, COLLECTIONS.USERS), 
-        (snapshot) => {
-            const users = snapshot.docs.map(d => d.data() as User);
-            callback(users);
-        }, 
-        (error) => {
-            console.error("Snapshot Listener Error (Users):", error);
-            if (onError) onError(error);
-        }
+      if (isOfflineMode) {
+          offlineSubscribers.users.push(callback);
+          callback(getLocal(COLLECTIONS.USERS));
+          return () => {};
+      }
+      return db.collection(COLLECTIONS.USERS).onSnapshot(
+        (s) => callback(s.docs.map(d => d.data() as User)), 
+        (e) => onError && onError(e)
       );
   },
 
   subscribeToTeams: (callback: (teams: Team[]) => void, onError?: (error: any) => void) => {
-      return onSnapshot(collection(db, COLLECTIONS.TEAMS), 
-        (snapshot) => {
-            const teams = snapshot.docs.map(d => d.data() as Team);
-            callback(teams);
-        },
-        (error) => {
-            console.error("Snapshot Listener Error (Teams):", error);
-            if (onError) onError(error);
-        }
+      if (isOfflineMode) {
+           offlineSubscribers.teams.push(callback);
+           callback(getLocal(COLLECTIONS.TEAMS));
+           return () => {};
+      }
+      return db.collection(COLLECTIONS.TEAMS).onSnapshot(
+        (s) => callback(s.docs.map(d => d.data() as Team)),
+        (e) => onError && onError(e)
       );
   },
 
   subscribeToMatches: (callback: (matches: Match[]) => void, onError?: (error: any) => void) => {
-      return onSnapshot(collection(db, COLLECTIONS.MATCHES), 
-        (snapshot) => {
-            const matches = snapshot.docs.map(d => d.data() as Match);
-            callback(matches);
-        },
-        (error) => {
-            console.error("Snapshot Listener Error (Matches):", error);
-            if (onError) onError(error);
-        }
+      if (isOfflineMode) {
+           offlineSubscribers.matches.push(callback);
+           callback(getLocal(COLLECTIONS.MATCHES));
+           return () => {};
+      }
+      return db.collection(COLLECTIONS.MATCHES).onSnapshot(
+        (s) => callback(s.docs.map(d => d.data() as Match)),
+        (e) => onError && onError(e)
       );
   },
 
-  // --- Actions ---
   login: async (username: string, pass: string): Promise<User | null> => {
-    try {
-        const q = query(collection(db, COLLECTIONS.USERS), where("username", "==", username), where("password", "==", pass));
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-            return snapshot.docs[0].data() as User;
-        }
-        return null;
-    } catch (error) {
-        console.error("Login Error:", error);
-        throw error;
+    if (isOfflineMode) {
+        const users = getLocal(COLLECTIONS.USERS) as User[];
+        return users.find(u => u.username === username && u.password === pass) || null;
     }
+    const snapshot = await db.collection(COLLECTIONS.USERS)
+      .where("username", "==", username)
+      .where("password", "==", pass)
+      .get();
+    return !snapshot.empty ? snapshot.docs[0].data() as User : null;
   },
 
   addUser: async (user: Omit<User, 'id'>) => {
     const newId = generateId();
     const newUser = { ...user, id: newId };
-    await setDoc(doc(db, COLLECTIONS.USERS, newId), newUser);
+    
+    if (isOfflineMode) {
+        const users = getLocal(COLLECTIONS.USERS);
+        users.push(newUser);
+        setLocal(COLLECTIONS.USERS, users);
+        notifyOffline('users');
+    } else {
+        await db.collection(COLLECTIONS.USERS).doc(newId).set(newUser);
+    }
     return newUser;
   },
 
   updateUser: async (updatedUser: User) => {
-    await setDoc(doc(db, COLLECTIONS.USERS, updatedUser.id), updatedUser, { merge: true });
+    if (isOfflineMode) {
+        const users = getLocal(COLLECTIONS.USERS) as User[];
+        const idx = users.findIndex(u => u.id === updatedUser.id);
+        if (idx !== -1) {
+            users[idx] = updatedUser;
+            setLocal(COLLECTIONS.USERS, users);
+            notifyOffline('users');
+        }
+    } else {
+        // Use merge: true to avoid overwriting missing fields if any
+        await db.collection(COLLECTIONS.USERS).doc(updatedUser.id).set(updatedUser, { merge: true });
+    }
   },
 
   deleteUser: async (userId: string) => {
-    await deleteDoc(doc(db, COLLECTIONS.USERS, userId));
-    // Ideally, we should also cleanup matches/teams, but keeping it simple for now
+    if (isOfflineMode) {
+        const users = getLocal(COLLECTIONS.USERS) as User[];
+        const newUsers = users.filter(u => u.id !== userId);
+        setLocal(COLLECTIONS.USERS, newUsers);
+        notifyOffline('users');
+    } else {
+        await db.collection(COLLECTIONS.USERS).doc(userId).delete();
+    }
   },
 
   updateMatch: async (match: Match) => {
-      await setDoc(doc(db, COLLECTIONS.MATCHES, match.id), match, { merge: true });
+    if (isOfflineMode) {
+        const matches = getLocal(COLLECTIONS.MATCHES) as Match[];
+        const idx = matches.findIndex(m => m.id === match.id);
+        if (idx !== -1) {
+            matches[idx] = match;
+            setLocal(COLLECTIONS.MATCHES, matches);
+            notifyOffline('matches');
+        }
+    } else {
+        await db.collection(COLLECTIONS.MATCHES).doc(match.id).set(match, { merge: true });
+    }
   },
   
-  // Used for bulk updates (e.g. generating brackets)
   saveMatchesBatch: async (matches: Match[]) => {
-      const batch = writeBatch(db);
-      matches.forEach(m => {
-          const ref = doc(db, COLLECTIONS.MATCHES, m.id);
-          batch.set(ref, m);
-      });
-      await batch.commit();
+      if (isOfflineMode) {
+          const current = getLocal(COLLECTIONS.MATCHES) as Match[];
+          // Upsert logic
+          matches.forEach(m => {
+              const idx = current.findIndex(cm => cm.id === m.id);
+              if (idx !== -1) current[idx] = m;
+              else current.push(m);
+          });
+          setLocal(COLLECTIONS.MATCHES, current);
+          notifyOffline('matches');
+      } else {
+        const batch = db.batch();
+        matches.forEach(m => {
+            const ref = db.collection(COLLECTIONS.MATCHES).doc(m.id);
+            batch.set(ref, m);
+        });
+        await batch.commit();
+      }
   },
 
   getTeamsOnce: async (): Promise<Team[]> => {
-      const s = await getDocs(collection(db, COLLECTIONS.TEAMS));
+      if (isOfflineMode) return getLocal(COLLECTIONS.TEAMS);
+      const s = await db.collection(COLLECTIONS.TEAMS).get();
       return s.docs.map(d => d.data() as Team);
   }
 };
