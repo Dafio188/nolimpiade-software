@@ -11,28 +11,29 @@ interface BracketProps {
 }
 
 const BracketNode: React.FC<{ match?: Match, players: Player[], label: string }> = ({ match, players, label }) => {
+  // Try to find players by ID. If not found (because it's a team ID), it might fail, 
+  // but since we switched to 1v1 finals, these SHOULD be player IDs.
   const p1 = players.find(p => p.id === match?.player1Id);
   const p2 = players.find(p => p.id === match?.player2Id);
   
-  // Fake empty nodes if match doesn't exist yet
-  const showP1 = p1 ? p1.name : (match ? 'TBD' : '-');
-  const showP2 = p2 ? p2.name : (match ? 'TBD' : '-');
+  const showP1 = p1 ? p1.name : (match?.player1Id ? 'TBD' : '-');
+  const showP2 = p2 ? p2.name : (match?.player2Id ? 'TBD' : '-');
   const s1 = match?.score1 ?? '';
   const s2 = match?.score2 ?? '';
 
   const winnerId = match?.winnerId;
 
   return (
-    <div className="flex flex-col bg-white/90 backdrop-blur-sm border border-white/50 rounded-lg shadow-md w-48 overflow-hidden my-2">
-      <div className="bg-gray-100 px-2 py-1 text-[10px] uppercase text-gray-600 font-bold border-b border-gray-200">
-        {match?.roundLabel || label}
+    <div className="flex flex-col bg-white/90 backdrop-blur-sm border border-white/50 rounded-lg shadow-md w-48 overflow-hidden my-2 transform transition-transform hover:scale-105">
+      <div className="bg-gray-100 px-2 py-1 text-[10px] uppercase text-gray-600 font-bold border-b border-gray-200 flex justify-between">
+        <span>{match?.roundLabel || label}</span>
       </div>
-      <div className={`flex justify-between items-center px-3 py-2 border-b border-gray-100 ${winnerId === p1?.id ? 'bg-green-100/50' : ''}`}>
-        <span className={`text-sm truncate ${winnerId === p1?.id ? 'font-bold text-black' : 'text-gray-800'}`}>{showP1}</span>
+      <div className={`flex justify-between items-center px-3 py-2 border-b border-gray-100 ${winnerId === match?.player1Id && match?.isCompleted ? 'bg-green-100/50' : ''}`}>
+        <span className={`text-sm truncate ${winnerId === match?.player1Id && match?.isCompleted ? 'font-bold text-black' : 'text-gray-800'}`}>{showP1}</span>
         <span className="font-mono font-bold text-gray-900 text-sm">{s1}</span>
       </div>
-      <div className={`flex justify-between items-center px-3 py-2 ${winnerId === p2?.id ? 'bg-green-100/50' : ''}`}>
-        <span className={`text-sm truncate ${winnerId === p2?.id ? 'font-bold text-black' : 'text-gray-800'}`}>{showP2}</span>
+      <div className={`flex justify-between items-center px-3 py-2 ${winnerId === match?.player2Id && match?.isCompleted ? 'bg-green-100/50' : ''}`}>
+        <span className={`text-sm truncate ${winnerId === match?.player2Id && match?.isCompleted ? 'font-bold text-black' : 'text-gray-800'}`}>{showP2}</span>
         <span className="font-mono font-bold text-gray-900 text-sm">{s2}</span>
       </div>
     </div>
@@ -67,7 +68,7 @@ export const Bracket: React.FC<BracketProps> = ({ disciplineId, matches, players
                             onClick={() => onGenerateBracket(disciplineId)}
                             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full shadow-lg transition-transform hover:scale-105"
                         >
-                            Genera Tabellone (Top 6)
+                            Genera Tabellone 1vs1 (Top 6)
                         </button>
                     )}
                 </div>
@@ -90,7 +91,6 @@ export const Bracket: React.FC<BracketProps> = ({ disciplineId, matches, players
                         <div className="relative">
                              <BracketNode match={sf1} players={players} label="Semi A (1° vs QA)" />
                              <div className="absolute top-1/2 -right-8 w-8 h-px bg-gray-500"></div>
-                             {/* Connector lines logic omitted for brevity, keeping simple horizontal lines */}
                         </div>
                         <div className="relative">
                              <BracketNode match={sf2} players={players} label="Semi B (2° vs QB)" />

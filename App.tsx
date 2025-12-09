@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Player, Match, AppState, DisciplineType, StandingRow, User } from './types';
-import { DISCIPLINES } from './constants';
+import { DISCIPLINES, WIN_POINTS, DRAW_POINTS, LOSS_POINTS } from './constants';
 import { Dock } from './components/Dock';
 import { MatchList } from './components/MatchList';
 import { Standings } from './components/Standings';
 import { FinalsView } from './components/Bracket';
 import { UserManager } from './components/UserManager';
-import { LiveSchedule } from './components/LiveSchedule'; // New import
+import { LiveSchedule } from './components/LiveSchedule'; 
 import { User as UserIcon, ShieldCheck, PlayCircle, Trophy, Sparkles } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { StorageService } from './services/storageService';
@@ -116,23 +116,36 @@ const App: React.FC = () => {
 
 
   const generateBracket = (disciplineId: string) => {
-    // Logic duplicated, ideally refactor
+    const teams = StorageService.getTeams();
+    
+    // Calculate INDIVIDUAL Standings for this discipline to determine Top 6 Players
     const stats: Record<string, StandingRow> = {};
     players.forEach(p => {
         stats[p.id] = { playerId: p.id, playerName: p.name, points: 0, played: 0, won: 0, wins: 0, lost: 0, diff: 0 };
     });
+
     const relevantMatches = matches.filter(m => m.disciplineId === disciplineId && m.isCompleted && m.phase === 'ROUND_ROBIN');
     
     relevantMatches.forEach(m => {
-        if(m.score1 === null || m.score2 === null) return;
-        const p1 = stats[m.player1Id]; const p2 = stats[m.player2Id];
-        // Safety check if user deleted
-        if (!p1 || !p2) return;
+        const team1 = teams.find(t => t.id === m.player1Id);
+        const team2 = teams.find(t => t.id === m.player2Id);
+        if (!team1 || !team2 || m.score1 === null || m.score2 === null) return;
 
-        p1.diff += (m.score1 - m.score2); p2.diff += (m.score2 - m.score1);
-        if (m.score1 > m.score2) { p1.points += 3; } 
-        else if (m.score2 > m.score1) { p2.points += 3; } 
-        else { p1.points += 1; p2.points += 1; }
+        let pts1 = 0; let pts2 = 0;
+        let w1 = 0; let w2 = 0;
+        const diff1 = m.score1 - m.score2;
+
+        if (m.score1 > m.score2) { pts1 = WIN_POINTS; pts2 = LOSS_POINTS; w1 = 1; }
+        else if (m.score2 > m.score1) { pts2 = WIN_POINTS; pts1 = LOSS_POINTS; w2 = 1; }
+        else { pts1 = DRAW_POINTS; pts2 = DRAW_POINTS; }
+
+        // Distribute to individuals
+        team1.playerIds.forEach(pid => {
+            if(stats[pid]) { stats[pid].points += pts1; stats[pid].diff += diff1; stats[pid].wins += w1; }
+        });
+        team2.playerIds.forEach(pid => {
+            if(stats[pid]) { stats[pid].points += pts2; stats[pid].diff -= diff1; stats[pid].wins += w2; }
+        });
     });
 
     const sorted = Object.values(stats).sort((a, b) => {
@@ -140,21 +153,28 @@ const App: React.FC = () => {
         return b.diff - a.diff;
     });
 
+    // Take top 6 INDIVIDUAL PLAYERS
     const top6 = sorted.slice(0, 6);
     if (top6.length < 6) {
         alert("Non ci sono abbastanza giocatori o partite per generare le finali.");
         return;
     }
 
+    // Check if finals already exist
+    if (matches.some(m => m.disciplineId === disciplineId && m.phase !== 'ROUND_ROBIN')) {
+        alert("Tabellone finali già generato per questa disciplina.");
+        return;
+    }
+
     const newMatches: Match[] = [];
     
-    // QF A: 4th vs 5th
+    // QF A: 4th vs 5th (Individual)
     newMatches.push({
         id: generateId(), disciplineId: disciplineId as DisciplineType,
         player1Id: top6[3].playerId, player2Id: top6[4].playerId,
         score1: null, score2: null, isCompleted: false, phase: 'QUARTER_FINAL', roundLabel: 'Quarti A'
     });
-    // QF B: 3rd vs 6th
+    // QF B: 3rd vs 6th (Individual)
     newMatches.push({
         id: generateId(), disciplineId: disciplineId as DisciplineType,
         player1Id: top6[2].playerId, player2Id: top6[5].playerId,
@@ -271,7 +291,18 @@ const App: React.FC = () => {
       const totalMatches = matches.length;
       const progress = Math.round((completedCount / totalMatches) * 100) || 0;
       
-      const myMatches = appState.currentUser ? matches.filter(m => !m.isCompleted && (m.player1Id === appState.currentUser!.id || m.player2Id === appState.currentUser!.id)) : [];
+      const teams = StorageService.getTeams();
+      
+      // Determine my matches (Individual or via Team)
+      const myMatches = appState.currentUser ? matches.filter(m => {
+          if (m.isCompleted) return false;
+          // Check if I am Player1 or Player2 (Individual match)
+          if (m.player1Id === appState.currentUser!.id || m.player2Id === appState.currentUser!.id) return true;
+          // Check if I am in Team1 or Team2
+          const t1 = teams.find(t => t.id === m.player1Id);
+          const t2 = teams.find(t => t.id === m.player2Id);
+          return t1?.playerIds.includes(appState.currentUser!.id) || t2?.playerIds.includes(appState.currentUser!.id);
+      }) : [];
 
       ContentComponent = (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full overflow-y-auto">
@@ -318,8 +349,18 @@ const App: React.FC = () => {
                <div className="space-y-2">
                    {(appState.currentUser?.role === 'PLAYER' && myMatches.length > 0 ? myMatches : matches.filter(m => !m.isCompleted)).slice(0, 3).map(m => {
                        const d = DISCIPLINES.find(x => x.id === m.disciplineId);
-                       const p1 = players.find(p => p.id === m.player1Id);
-                       const p2 = players.find(p => p.id === m.player2Id);
+                       
+                       // Generic name resolver
+                       const resolveName = (id: string) => {
+                           const t = teams.find(x => x.id === id);
+                           if(t) return t.name;
+                           const p = players.find(x => x.id === id);
+                           return p ? p.name : 'TBD';
+                       }
+
+                       const n1 = resolveName(m.player1Id);
+                       const n2 = resolveName(m.player2Id);
+
                        return (
                            <div key={m.id} className="flex items-center justify-between bg-white/70 p-3 rounded-lg border border-white/60">
                                <div className="flex items-center space-x-2">
@@ -327,7 +368,7 @@ const App: React.FC = () => {
                                    <span className="text-sm font-medium">{d?.name}</span>
                                </div>
                                <div className="text-sm text-gray-800">
-                                   <span className="font-semibold">{p1?.name}</span> vs <span className="font-semibold">{p2?.name}</span>
+                                   <span className="font-semibold">{n1}</span> vs <span className="font-semibold">{n2}</span>
                                </div>
                            </div>
                        )

@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Player, StandingRow, Discipline, Match, User, Team } from '../types';
 import { DISCIPLINES, WIN_POINTS, DRAW_POINTS, LOSS_POINTS } from '../constants';
-import { Trophy, Wand2, Users } from 'lucide-react';
+import { Trophy, Wand2, User as UserIcon } from 'lucide-react';
 import { analyzeStandings } from '../services/geminiService';
 import { StorageService } from '../services/storageService';
 
@@ -21,24 +21,21 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
       setTeams(StorageService.getTeams());
   }, []);
 
-  // Calculate standings for a specific discipline (Round Robin phase only)
+  // Calculate INDIVIDUAL standings
   const calculateStandings = (disciplineId: string): StandingRow[] => {
-    // Initialize stats for TEAMS, not players
+    // Initialize stats for PLAYERS (Individual Ranking)
     const stats: Record<string, StandingRow> = {};
-    teams.forEach(t => {
-      // Check if current user is part of this team
-      const isMyTeam = currentUser ? t.playerIds.includes(currentUser.id) : false;
-
-      stats[t.id] = {
-        playerId: t.id, // Using TeamID
-        playerName: t.name, // Team Name
+    players.forEach(p => {
+      stats[p.id] = {
+        playerId: p.id,
+        playerName: p.name,
         points: 0,
         played: 0,
         won: 0,
         wins: 0,
         lost: 0,
         diff: 0,
-        isCurrentUser: isMyTeam
+        isCurrentUser: currentUser ? p.id === currentUser.id : false
       };
     });
 
@@ -47,33 +44,49 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
     );
 
     relevantMatches.forEach(m => {
-      const t1 = stats[m.player1Id];
-      const t2 = stats[m.player2Id];
+      // Resolve Teams
+      const team1 = teams.find(t => t.id === m.player1Id);
+      const team2 = teams.find(t => t.id === m.player2Id);
       
-      // Safety check if team was deleted/missing
-      if (!t1 || !t2 || m.score1 === null || m.score2 === null) return;
+      if (!team1 || !team2 || m.score1 === null || m.score2 === null) return;
 
-      t1.played++;
-      t2.played++;
-      t1.diff += (m.score1 - m.score2);
-      t2.diff += (m.score2 - m.score1);
+      const score1 = m.score1;
+      const score2 = m.score2;
+      const diff1 = score1 - score2;
+      const diff2 = score2 - score1;
 
-      if (m.score1 > m.score2) {
-        t1.points += WIN_POINTS;
-        t1.won++;
-        t1.wins++;
-        t2.points += LOSS_POINTS;
-        t2.lost++;
-      } else if (m.score2 > m.score1) {
-        t2.points += WIN_POINTS;
-        t2.won++;
-        t2.wins++;
-        t1.points += LOSS_POINTS;
-        t1.lost++;
-      } else {
-        t1.points += DRAW_POINTS;
-        t2.points += DRAW_POINTS;
-      }
+      // Determine Points for this match
+      let pts1 = 0;
+      let pts2 = 0;
+      let w1 = 0, l1 = 0, w2 = 0, l2 = 0;
+
+      if (score1 > score2) { pts1 = WIN_POINTS; pts2 = LOSS_POINTS; w1 = 1; l2 = 1; }
+      else if (score2 > score1) { pts2 = WIN_POINTS; pts1 = LOSS_POINTS; w2 = 1; l1 = 1; }
+      else { pts1 = DRAW_POINTS; pts2 = DRAW_POINTS; }
+
+      // Distribute stats to INDIVIDUAL players of Team 1
+      team1.playerIds.forEach(pid => {
+          if (stats[pid]) {
+              stats[pid].played += 1;
+              stats[pid].points += pts1;
+              stats[pid].diff += diff1;
+              stats[pid].won += w1;
+              stats[pid].wins += w1;
+              stats[pid].lost += l1;
+          }
+      });
+
+      // Distribute stats to INDIVIDUAL players of Team 2
+      team2.playerIds.forEach(pid => {
+          if (stats[pid]) {
+              stats[pid].played += 1;
+              stats[pid].points += pts2;
+              stats[pid].diff += diff2;
+              stats[pid].won += w2;
+              stats[pid].wins += w2;
+              stats[pid].lost += l2;
+          }
+      });
     });
 
     return Object.values(stats).sort((a, b) => {
@@ -82,23 +95,22 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
     });
   };
 
-  const currentStandings = useMemo(() => calculateStandings(activeTab), [activeTab, matches, currentUser, teams]);
+  const currentStandings = useMemo(() => calculateStandings(activeTab), [activeTab, matches, currentUser, teams, players]);
 
   // Overall Standings
   const overallStandings = useMemo(() => {
     const overall: Record<string, StandingRow> = {};
-    teams.forEach(t => {
-      const isMyTeam = currentUser ? t.playerIds.includes(currentUser.id) : false;
-      overall[t.id] = {
-        playerId: t.id,
-        playerName: t.name,
+    players.forEach(p => {
+      overall[p.id] = {
+        playerId: p.id,
+        playerName: p.name,
         points: 0,
         played: 0,
         won: 0,
         wins: 0,
         lost: 0,
         diff: 0,
-        isCurrentUser: isMyTeam
+        isCurrentUser: currentUser ? p.id === currentUser.id : false
       };
     });
 
@@ -121,7 +133,7 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
       return b.diff - a.diff;
     });
 
-  }, [matches, currentUser, teams]);
+  }, [matches, currentUser, teams, players]);
 
 
   const displayedStandings = activeTab === 'OVERALL' ? overallStandings : currentStandings;
@@ -129,8 +141,8 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
 
   const handleAIAnalysis = async () => {
     setLoadingAI(true);
-    const textData = displayedStandings.map((r, i) => `${i+1}. ${r.playerName}: ${r.points}pt`).join('\n');
-    const disciplineName = activeTab === 'OVERALL' ? "Classifica Generale a Squadre" : activeDiscipline?.name || "";
+    const textData = displayedStandings.slice(0, 12).map((r, i) => `${i+1}. ${r.playerName}: ${r.points}pt`).join('\n');
+    const disciplineName = activeTab === 'OVERALL' ? "Classifica Generale Individuale" : activeDiscipline?.name || "";
     
     const analysis = await analyzeStandings(textData, disciplineName);
     setAiAnalysis(analysis);
@@ -186,7 +198,7 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
             <thead className="sticky top-0 bg-gray-50/90 backdrop-blur-sm z-10 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                 <tr>
                 <th className="px-6 py-4 border-b border-gray-300">Pos</th>
-                <th className="px-6 py-4 border-b border-gray-300">Squadra</th>
+                <th className="px-6 py-4 border-b border-gray-300">Atleta</th>
                 <th className="px-6 py-4 border-b border-gray-300 text-center">PT</th>
                 <th className="px-6 py-4 border-b border-gray-300 text-center hidden sm:table-cell">G</th>
                 <th className="px-6 py-4 border-b border-gray-300 text-center hidden sm:table-cell">V</th>
@@ -196,13 +208,10 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
             </thead>
             <tbody className="divide-y divide-gray-200">
                 {displayedStandings.map((row, index) => {
-                const isQualifying = activeTab !== 'OVERALL' && index < 4; // Qualify top 4 for semis?
+                const isQualifying = activeTab !== 'OVERALL' && index < 6; // Top 6 Individual qualify
                 
-                // Get team members for display
-                const team = teams.find(t => t.id === row.playerId);
-                const p1 = players.find(p => p.id === team?.playerIds[0]);
-                const p2 = players.find(p => p.id === team?.playerIds[1]);
-
+                const player = players.find(p => p.id === row.playerId);
+                
                 return (
                     <tr key={row.playerId} className={`hover:bg-blue-50/50 transition-colors ${isQualifying ? 'bg-green-50/50' : ''} ${row.isCurrentUser ? 'bg-yellow-100/80 border-l-4 border-yellow-400' : ''}`}>
                     <td className="px-6 py-3 whitespace-nowrap">
@@ -215,11 +224,10 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
                         </div>
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap">
-                        <div className={`font-medium ${row.isCurrentUser ? 'text-black font-bold' : 'text-gray-900'}`}>{row.playerName} {row.isCurrentUser && '(Tu)'}</div>
-                        <div className="text-[10px] text-gray-500 flex items-center gap-1">
-                             <Users size={10} />
-                             {p1?.name.split(' ')[0]} & {p2?.name.split(' ')[0]}
-                        </div>
+                         <div className="flex items-center gap-3">
+                             <img src={player?.avatar} alt="" className="w-8 h-8 rounded-full border border-gray-200" />
+                             <div className={`font-medium ${row.isCurrentUser ? 'text-black font-bold' : 'text-gray-900'}`}>{row.playerName} {row.isCurrentUser && '(Tu)'}</div>
+                         </div>
                     </td>
                     <td className="px-6 py-3 whitespace-nowrap text-center font-bold text-lg text-blue-700">
                         {row.points}
@@ -237,11 +245,12 @@ export const Standings: React.FC<StandingsProps> = ({ players, matches, currentU
             </table>
         </div>
       </div>
-       <div className="mt-2 flex justify-end">
+       <div className="mt-2 flex justify-between items-center text-xs text-gray-500 px-2">
+            <span>*Si qualificano i primi 6 atleti per le finali 1vs1.</span>
            <button 
                 onClick={handleAIAnalysis} 
                 disabled={loadingAI}
-                className="flex items-center gap-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg transition-colors bg-white/50"
+                className="flex items-center gap-2 font-medium text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg transition-colors bg-white/50"
            >
                 <Wand2 size={14} />
                 {loadingAI ? 'Sto analizzando...' : 'Analisi AI'}

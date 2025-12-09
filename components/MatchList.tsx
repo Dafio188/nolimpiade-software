@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Match, Player, Discipline, MatchPhase, User, Team } from '../types';
 import { DISCIPLINES } from '../constants';
-import { Save, CheckCircle2, Wand2, Users as UsersIcon, Info } from 'lucide-react';
+import { Save, CheckCircle2, Wand2, Users as UsersIcon, Info, User as UserIcon } from 'lucide-react';
 import { generateMatchCommentary } from '../services/geminiService';
 import { StorageService } from '../services/storageService';
 
@@ -33,10 +33,11 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
   const getTeam = (id: string) => teams.find(t => t.id === id);
   const getDiscipline = (id: string) => DISCIPLINES.find(d => d.id === id);
   
-  // Helper to check if current user is in a team
-  const isUserInTeam = (teamId: string, userId: string) => {
-      const team = getTeam(teamId);
-      return team?.playerIds.includes(userId);
+  // Helper to check if current user is involved (either as Individual or in a Team)
+  const isUserInvolved = (participantId: string, userId: string) => {
+      if (participantId === userId) return true; // Individual match
+      const team = getTeam(participantId);
+      return team?.playerIds.includes(userId); // Team match
   }
 
   const filteredMatches = useMemo(() => {
@@ -44,7 +45,7 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
       const discMatch = selectedDiscipline === 'ALL' || m.disciplineId === selectedDiscipline;
       const phaseMatch = selectedPhase === 'ALL' || m.phase === selectedPhase;
       
-      const userMatch = !onlyMyMatches || (currentUser && (isUserInTeam(m.player1Id, currentUser.id) || isUserInTeam(m.player2Id, currentUser.id)));
+      const userMatch = !onlyMyMatches || (currentUser && (isUserInvolved(m.player1Id, currentUser.id) || isUserInvolved(m.player2Id, currentUser.id)));
       
       return discMatch && phaseMatch && userMatch;
     });
@@ -69,35 +70,56 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
   const handleGenCommentary = async (match: Match) => {
     setLoadingAI(true);
     setCommentary(null);
-    const t1 = getTeam(match.player1Id);
-    const t2 = getTeam(match.player2Id);
     const disc = getDiscipline(match.disciplineId);
-    if (t1 && t2 && disc) {
-        // Mocking Player interface for AI compatibility using Team names
-        const fakeP1 = { name: `Team ${t1.name}` } as Player;
-        const fakeP2 = { name: `Team ${t2.name}` } as Player;
+    
+    // Resolve names whether it's Team or Player
+    const getParticipantName = (id: string) => {
+        const t = getTeam(id);
+        if (t) return `Team ${t.name}`;
+        const p = players.find(x => x.id === id);
+        return p ? p.name : 'Unknown';
+    }
+
+    if (disc) {
+        const fakeP1 = { name: getParticipantName(match.player1Id) } as Player;
+        const fakeP2 = { name: getParticipantName(match.player2Id) } as Player;
         const text = await generateMatchCommentary(match, fakeP1, fakeP2, disc);
         setCommentary(text);
     }
     setLoadingAI(false);
   };
 
-  const renderTeamName = (teamId: string) => {
-      const t = getTeam(teamId);
-      if (!t) return "TBD";
-      
-      // Detailed view with player names
-      const p1 = players.find(p => p.id === t.playerIds[0]);
-      const p2 = players.find(p => p.id === t.playerIds[1]);
-      
-      return (
-          <div className="flex flex-col">
-              <span className="font-bold text-sm md:text-base">{t.name}</span>
-              <span className="text-[10px] md:text-xs text-gray-500">
-                  {p1?.name.split(' ')[0]} ({p1?.weight}) & {p2?.name.split(' ')[0]} ({p2?.weight})
-              </span>
-          </div>
-      );
+  const renderParticipant = (id: string) => {
+      // 1. Try finding a Team
+      const t = getTeam(id);
+      if (t) {
+        const p1 = players.find(p => p.id === t.playerIds[0]);
+        const p2 = players.find(p => p.id === t.playerIds[1]);
+        return (
+            <div className="flex flex-col">
+                <span className="font-bold text-sm md:text-base flex items-center gap-1 justify-end md:justify-start">
+                    {t.name}
+                    <UsersIcon size={12} className="text-gray-400"/>
+                </span>
+                <span className="text-[10px] md:text-xs text-gray-500">
+                    {p1?.name.split(' ')[0]} & {p2?.name.split(' ')[0]}
+                </span>
+            </div>
+        );
+      }
+
+      // 2. Try finding a Player (Individual Finals)
+      const p = players.find(x => x.id === id);
+      if (p) {
+          return (
+            <div className="flex items-center gap-2">
+                <span className="font-bold text-sm md:text-base">{p.name}</span>
+                <UserIcon size={12} className="text-blue-500"/>
+            </div>
+          );
+      }
+
+      return "TBD";
   };
 
   return (
@@ -120,10 +142,10 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
           className="bg-white/70 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="ALL">Tutte le Fasi</option>
-          <option value="ROUND_ROBIN">Gironi</option>
-          <option value="QUARTER_FINAL">Quarti</option>
-          <option value="SEMI_FINAL">Semifinali</option>
-          <option value="FINAL">Finali</option>
+          <option value="ROUND_ROBIN">Gironi (2vs2)</option>
+          <option value="QUARTER_FINAL">Quarti (1vs1)</option>
+          <option value="SEMI_FINAL">Semifinali (1vs1)</option>
+          <option value="FINAL">Finali (1vs1)</option>
         </select>
 
         {currentUser && (
@@ -162,7 +184,7 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
             const isEditing = editingMatchId === match.id;
             
             // Highlight if current user belongs to one of the teams
-            const isMyMatch = currentUser && (isUserInTeam(match.player1Id, currentUser.id) || isUserInTeam(match.player2Id, currentUser.id));
+            const isMyMatch = currentUser && (isUserInvolved(match.player1Id, currentUser.id) || isUserInvolved(match.player2Id, currentUser.id));
 
             return (
                 <div key={match.id} className={`relative flex flex-col p-4 rounded-xl border transition-all ${match.isCompleted ? 'bg-white/70 border-green-200' : 'bg-white/90 border-white/50 shadow-sm'} ${isMyMatch ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-white/0' : ''}`}>
@@ -180,10 +202,10 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
                     </div>
 
                     <div className="flex items-center justify-between">
-                        {/* Team 1 */}
-                        <div className="flex-1 text-right pr-4">
-                            <span className={`block ${match.isCompleted && match.score1! > match.score2! ? 'text-black font-bold' : 'text-gray-800'} ${isUserInTeam(match.player1Id, currentUser?.id || '') ? 'text-blue-700' : ''}`}>
-                                {renderTeamName(match.player1Id)}
+                        {/* Participant 1 */}
+                        <div className="flex-1 text-right pr-4 flex justify-end">
+                            <span className={`block ${match.isCompleted && match.score1! > match.score2! ? 'text-black font-bold' : 'text-gray-800'} ${isUserInvolved(match.player1Id, currentUser?.id || '') ? 'text-blue-700' : ''}`}>
+                                {renderParticipant(match.player1Id)}
                             </span>
                         </div>
 
@@ -216,10 +238,10 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
                         )}
                         </div>
 
-                        {/* Team 2 */}
+                        {/* Participant 2 */}
                         <div className="flex-1 text-left pl-4">
-                            <span className={`block ${match.isCompleted && match.score2! > match.score1! ? 'text-black font-bold' : 'text-gray-800'} ${isUserInTeam(match.player2Id, currentUser?.id || '') ? 'text-blue-700' : ''}`}>
-                                {renderTeamName(match.player2Id)}
+                            <span className={`block ${match.isCompleted && match.score2! > match.score1! ? 'text-black font-bold' : 'text-gray-800'} ${isUserInvolved(match.player2Id, currentUser?.id || '') ? 'text-blue-700' : ''}`}>
+                                {renderParticipant(match.player2Id)}
                             </span>
                         </div>
                     </div>
