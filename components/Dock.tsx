@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, Calendar, LayoutDashboard, LogOut, MessageSquareQuote, Users, MonitorPlay } from 'lucide-react';
+import { Trophy, Calendar, LayoutDashboard, LogOut, Users, MonitorPlay } from 'lucide-react';
 import { AppState } from '../types';
 
 interface DockProps {
@@ -78,12 +78,6 @@ export const Dock: React.FC<DockProps> = ({ currentView, onChangeView, onLogout,
           label="Finali"
           isActive={currentView === 'FINALS'}
           onClick={() => onChangeView('FINALS')}
-        />
-         <DockItem
-          icon={<MessageSquareQuote size={24} />}
-          label="Commentatore AI"
-          isActive={currentView === 'GEMINI'}
-          onClick={() => onChangeView('GEMINI')}
         />
         <div className="mx-2 h-10 w-px bg-white/40" />
         <DockItem

@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Match, Player, Discipline, MatchPhase, User, Team } from '../types';
 import { DISCIPLINES } from '../constants';
-import { Save, CheckCircle2, Wand2, Users as UsersIcon, Info, User as UserIcon } from 'lucide-react';
-import { generateMatchCommentary } from '../services/geminiService';
+import { Save, CheckCircle2, Users as UsersIcon, Info, User as UserIcon } from 'lucide-react';
 import { StorageService } from '../services/storageService';
 
 interface MatchListProps {
@@ -19,9 +18,6 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
   const [onlyMyMatches, setOnlyMyMatches] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   
-  const [commentary, setCommentary] = useState<string | null>(null);
-  const [loadingAI, setLoadingAI] = useState(false);
-
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [tempScore1, setTempScore1] = useState<string>('');
   const [tempScore2, setTempScore2] = useState<string>('');
@@ -65,28 +61,6 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
       onUpdateScore(matchId, s1, s2);
       setEditingMatchId(null);
     }
-  };
-
-  const handleGenCommentary = async (match: Match) => {
-    setLoadingAI(true);
-    setCommentary(null);
-    const disc = getDiscipline(match.disciplineId);
-    
-    // Resolve names whether it's Team or Player
-    const getParticipantName = (id: string) => {
-        const t = getTeam(id);
-        if (t) return `Team ${t.name}`;
-        const p = players.find(x => x.id === id);
-        return p ? p.name : 'Unknown';
-    }
-
-    if (disc) {
-        const fakeP1 = { name: getParticipantName(match.player1Id) } as Player;
-        const fakeP2 = { name: getParticipantName(match.player2Id) } as Player;
-        const text = await generateMatchCommentary(match, fakeP1, fakeP2, disc);
-        setCommentary(text);
-    }
-    setLoadingAI(false);
   };
 
   const renderParticipant = (id: string) => {
@@ -162,17 +136,6 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
             </button>
         )}
       </div>
-
-      {/* AI Commentary Modal */}
-      {commentary && (
-        <div className="mb-4 p-4 bg-purple-100 border border-purple-300 rounded-xl text-purple-900 flex justify-between items-start animate-fade-in shadow-md">
-            <div className="flex gap-2">
-                <Wand2 className="w-5 h-5 mt-1" />
-                <p className="italic">"{commentary}"</p>
-            </div>
-            <button onClick={() => setCommentary(null)} className="text-xs hover:underline">Chiudi</button>
-        </div>
-      )}
 
       {/* Match List */}
       <div className="flex-1 overflow-y-auto pr-2 space-y-3">
@@ -266,19 +229,6 @@ export const MatchList: React.FC<MatchListProps> = ({ matches, players, currentU
                         >
                             <Save size={18} />
                         </button>
-                        )}
-
-                        {match.isCompleted && (
-                        <div className="flex gap-1">
-                            <button 
-                                onClick={() => handleGenCommentary(match)} 
-                                disabled={loadingAI}
-                                className={`p-1.5 rounded-full transition-colors ${loadingAI ? 'text-gray-400' : 'text-purple-600 hover:bg-purple-100'}`}
-                                title="Commento AI"
-                            >
-                                <Wand2 size={16} />
-                            </button>
-                        </div>
                         )}
                     </div>
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Player, Match, AppState, DisciplineType, StandingRow, User } from './types';
+import { Match, AppState, DisciplineType, StandingRow, User } from './types';
 import { DISCIPLINES, WIN_POINTS, DRAW_POINTS, LOSS_POINTS } from './constants';
 import { Dock } from './components/Dock';
 import { MatchList } from './components/MatchList';
@@ -7,8 +7,8 @@ import { Standings } from './components/Standings';
 import { FinalsView } from './components/Bracket';
 import { UserManager } from './components/UserManager';
 import { LiveSchedule } from './components/LiveSchedule'; 
-import { User as UserIcon, ShieldCheck, PlayCircle, Trophy, Sparkles } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+import { AIAssistant } from './components/AIAssistant';
+import { User as UserIcon, ShieldCheck, PlayCircle, Trophy, MessageSquareText } from 'lucide-react';
 import { StorageService } from './services/storageService';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -25,6 +25,9 @@ const App: React.FC = () => {
   const [players, setPlayers] = useState<User[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [appState, setAppState] = useState<AppState>({ view: 'LOGIN', currentUser: null });
+  
+  // Chatbot State
+  const [isChatOpen, setIsChatOpen] = useState(false);
   
   // Login State
   const [loginUser, setLoginUser] = useState('');
@@ -272,18 +275,6 @@ const App: React.FC = () => {
     case 'FINALS':
       ContentComponent = <FinalsView matches={matches} players={players} isAdmin={appState.currentUser?.role === 'MASTER'} onGenerateBracket={generateBracket} disciplineId="PING_PONG" />;
       break;
-    case 'GEMINI':
-      ContentComponent = (
-          <div className="flex flex-col items-center justify-center h-full text-center p-8 text-gray-700">
-              <Sparkles size={64} className="text-purple-500 mb-4 animate-pulse" />
-              <h2 className="text-2xl font-bold mb-2">Nolimpiadi AI Assistant</h2>
-              <p className="max-w-md mb-6">L'intelligenza artificiale è integrata nelle sezioni <strong>Incontri</strong> (per le telecronache) e <strong>Classifiche</strong> (per le previsioni). Clicca sulle icone bacchetta magica in quelle sezioni!</p>
-              <div className="text-sm bg-white/80 p-4 rounded-lg border border-purple-100 shadow-sm">
-                  Powered by Google Gemini 2.5 Flash
-              </div>
-          </div>
-      );
-      break;
     case 'DASHBOARD':
     default:
       // Simple Dashboard
@@ -418,7 +409,6 @@ const App: React.FC = () => {
                         {appState.view === 'MATCHES' && 'Calendario Incontri'}
                         {appState.view === 'STANDINGS' && 'Classifiche Ufficiali'}
                         {appState.view === 'FINALS' && 'Tabellone Finali'}
-                        {appState.view === 'GEMINI' && 'AI Assistant'}
                     </div>
                     <div className="w-16"></div> {/* Spacer for centering */}
                 </div>
@@ -430,6 +420,21 @@ const App: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {/* Global AI Chatbot Widget */}
+      {isChatOpen && (
+          <div className="fixed bottom-24 right-4 md:right-8 w-80 h-96 rounded-2xl shadow-2xl z-[60] overflow-hidden animate-fade-in ring-2 ring-white/50">
+              <AIAssistant players={players} matches={matches} onClose={() => setIsChatOpen(false)} />
+          </div>
+      )}
+
+      {/* Floating Chat Button (FAB) */}
+      <button 
+        onClick={() => setIsChatOpen(!isChatOpen)}
+        className="fixed bottom-24 right-4 md:right-8 z-50 p-4 bg-purple-600 hover:bg-purple-700 text-white rounded-full shadow-lg transition-transform hover:scale-110 active:scale-95 flex items-center justify-center border-2 border-white/20"
+      >
+        <MessageSquareText size={24} />
+      </button>
 
       {/* Dock */}
       <Dock 
